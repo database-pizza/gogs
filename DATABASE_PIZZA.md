@@ -143,7 +143,21 @@ paths reconstruct tables through the ORM using the original table models, which
 would recreate the composite `lfs_object` primary key that this backend cannot
 store correctly.
 
+## Branding
+
+The home page and footer of this fork identify the hosted instance:
+
+- `templates/home.tmpl` adds a line under the hero stating the instance is hosted
+  on database.pizza and stores its data in a managed PizzaSQL database.
+- `templates/base/footer.tmpl` adds a "Hosted on database.pizza" link.
+
+Both templates are embedded in the binary, but `custom/templates/` overrides them
+at runtime, so a deployment can ship them without rebuilding. On the
+`git.database.pizza` host they are installed under
+`/home/pizzadatabase/gogs/shared/custom/templates/`.
+
 ## Status
 
 This backend is experimental. The engine requirements above are met only by a
-local source build; nothing is deployed to production.
+local source build. It runs the `git.database.pizza` instance through the managed
+service; there is no claim of general production support.
