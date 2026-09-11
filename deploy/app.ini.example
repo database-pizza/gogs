@@ -1,0 +1,77 @@
+; Gogs custom configuration for the git.database.pizza deployment.
+;
+; Install this file as:
+;   /home/pizzadatabase/gogs/shared/custom/conf/app.ini
+;
+; This file overrides the defaults shipped in the embedded conf/app.ini, so it
+; only needs the keys that differ. Values written as <placeholder> must be
+; generated or provided on the host; never commit real secrets or credentials.
+; The service account must be able to read this file, but its permissions must
+; not leak secrets, so install it with mode 0640 root:gogs or 0600.
+
+BRAND_NAME = Gogs
+RUN_USER = gogs
+RUN_MODE = prod
+
+[server]
+; Gogs listens only on loopback; Caddy terminates TLS and proxies to it.
+EXTERNAL_URL = https://git.database.pizza/
+DOMAIN = git.database.pizza
+PROTOCOL = http
+HTTP_ADDR = 127.0.0.1
+HTTP_PORT = 3001
+APP_DATA_PATH = /home/pizzadatabase/gogs/shared/data
+
+; SSH is disabled for the initial rollout. Do not enable it until the
+; authorized_keys handling and the git system account are designed separately.
+DISABLE_SSH = true
+START_SSH_SERVER = false
+REWRITE_AUTHORIZED_KEYS_AT_START = false
+
+[database]
+; Hosted managed PizzaSQL database, reached through a local proxy on loopback.
+; This is the product's authenticated PostgreSQL proxy, not a direct engine
+; port. It currently has no TLS; keep this connection strictly on loopback.
+TYPE = pizzasql
+HOST = 127.0.0.1:5432
+NAME = gogs/gogs
+USER = gogs
+PASSWORD = <scoped-api-key>
+SSL_MODE = disable
+MAX_OPEN_CONNS = 3
+MAX_IDLE_CONNS = 3
+
+[repository]
+ROOT = /home/pizzadatabase/gogs/shared/repos
+
+[security]
+INSTALL_LOCK = true
+SECRET_KEY = <generated-on-host>
+COOKIE_SECURE = true
+
+[auth]
+DISABLE_REGISTRATION = true
+
+[session]
+PROVIDER = file
+PROVIDER_CONFIG = /home/pizzadatabase/gogs/shared/data/sessions
+COOKIE_SECURE = true
+
+[log]
+MODE = console
+LEVEL = Info
+ROOT_PATH = /home/pizzadatabase/gogs/shared/data/log
+
+[repository.upload]
+TEMP_PATH = /home/pizzadatabase/gogs/shared/data/tmp/uploads
+
+[lfs]
+OBJECTS_PATH = /home/pizzadatabase/gogs/shared/data/lfs-objects
+OBJECTS_TEMP_PATH = /home/pizzadatabase/gogs/shared/data/tmp/lfs-objects
+
+[attachment]
+PATH = /home/pizzadatabase/gogs/shared/data/attachments
+
+[picture]
+AVATAR_UPLOAD_PATH = /home/pizzadatabase/gogs/shared/data/avatars
+REPOSITORY_AVATAR_UPLOAD_PATH = /home/pizzadatabase/gogs/shared/data/repo-avatars

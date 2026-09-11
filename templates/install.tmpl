@@ -53,11 +53,14 @@
 							<label for="db_schema">{{.i18n.Tr "install.db_schema"}}</label>
 							<input id="db_schema" name="db_schema" value="{{.db_schema}}">
 						</div>
+					</div>
+
+					<div id="ssl_settings" class="{{if and (ne .CurDbOption "PostgreSQL") (ne .CurDbOption "PizzaSQL")}}hide{{end}}">
 						<div class="inline required field">
 							<label>{{.i18n.Tr "install.ssl_mode"}}</label>
-							<div class="ui selection database type dropdown">
-								<input type="hidden" name="ssl_mode" value="{{if .ssl_mode}}{{.ssl_mode}}{{else}}disable{{end}}">
-								<div class="default text">disable</div>
+							<div class="ui selection database type dropdown ssl-mode-dropdown">
+								<input type="hidden" name="ssl_mode" value="{{if .ssl_mode}}{{.ssl_mode}}{{else if eq .CurDbOption "PizzaSQL"}}require{{else}}disable{{end}}">
+								<div class="default text">{{if .ssl_mode}}{{.ssl_mode}}{{else if eq .CurDbOption "PizzaSQL"}}require{{else}}disable{{end}}</div>
 								<i class="dropdown icon"></i>
 								<div class="menu">
 									<div class="item" data-value="disable">Disable</div>
@@ -270,6 +273,7 @@
 		if (dbType === "SQLite3") {
 			$('#sql_settings').hide();
 			$('#pgsql_settings').hide();
+			$('#ssl_settings').hide();
 			$('#sqlite_settings').show();
 
 			if (dbType === "SQLite3") {
@@ -286,6 +290,13 @@
 		$('#sqlite_settings').hide();
 		$('#sql_settings').show();
 		$('#pgsql_settings').toggle(dbType === "PostgreSQL");
+		$('#ssl_settings').toggle(dbType === "PostgreSQL" || dbType === "PizzaSQL");
+
+		// PizzaSQL defaults to a TLS-required connection.
+		if (dbType === "PizzaSQL") {
+			$('.ssl-mode-dropdown').dropdown('set selected', 'require');
+		}
+
 		$.each(dbDefaults, function(type, defaultHost) {
 			if ($('#db_host').val() == defaultHost) {
 				$('#db_host').val(dbDefaults[dbType]);

@@ -55,8 +55,9 @@ func NewConnection(w logger.Writer) (*gorm.DB, error) {
 
 	// NOTE: AutoMigrate does not respect logger passed in gorm.Config.
 	logger.Default = logger.New(w, logger.Config{
-		SlowThreshold: 100 * time.Millisecond,
-		LogLevel:      level,
+		SlowThreshold:        100 * time.Millisecond,
+		LogLevel:             level,
+		ParameterizedQueries: conf.Database.Type == "pizzasql",
 	})
 
 	db, err := dbutil.OpenDB(
@@ -79,8 +80,8 @@ func NewConnection(w logger.Writer) (*gorm.DB, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "get underlying *sql.DB")
 	}
-	sqlDB.SetMaxOpenConns(conf.Database.MaxOpenConns)
-	sqlDB.SetMaxIdleConns(conf.Database.MaxIdleConns)
+	sqlDB.SetMaxOpenConns(dbutil.PoolSize(conf.Database.Type, conf.Database.MaxOpenConns))
+	sqlDB.SetMaxIdleConns(dbutil.IdlePoolSize(conf.Database.Type, conf.Database.MaxIdleConns))
 	sqlDB.SetConnMaxLifetime(time.Minute)
 
 	switch conf.Database.Type {
@@ -93,6 +94,8 @@ func NewConnection(w logger.Writer) (*gorm.DB, error) {
 		conf.UseSQLite3 = true
 	case "mssql":
 		conf.UseMSSQL = true
+	case "pizzasql":
+		conf.UseSQLite3 = true
 	default:
 		panic("unreachable")
 	}
@@ -106,7 +109,11 @@ func NewConnection(w logger.Writer) (*gorm.DB, error) {
 		}
 
 		name := strings.TrimPrefix(fmt.Sprintf("%T", table), "*database.")
-		err = db.Migrator().AutoMigrate(table)
+		migrateModel := table
+		if conf.Database.Type == "pizzasql" && name == "LFSObject" {
+			migrateModel = new(pizzaLFSObject)
+		}
+		err = db.Migrator().AutoMigrate(migrateModel)
 		if err != nil {
 			return nil, errors.Wrapf(err, "auto migrate %q", name)
 		}

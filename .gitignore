@@ -6,6 +6,7 @@ dist/
 log/
 custom/
 data/
+.pizza-dev/
 
 # Configuration and application files
 .idea/

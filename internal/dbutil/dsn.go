@@ -12,7 +12,60 @@ import (
 	"gorm.io/gorm"
 
 	"gogs.io/gogs/internal/conf"
+	"gogs.io/gogs/internal/pizzadriver"
 )
+
+// maxPizzaSQLConnsPerEngine caps the connection pool of each ORM layer when the
+// "pizzasql" backend is used. GORM and XORM share a single remote engine, so
+// each layer stays small by default to avoid overwhelming it.
+const maxPizzaSQLConnsPerEngine = 3
+
+// PoolSize returns the effective max-open-connections pool size for the given
+// database type. The "pizzasql" backend is experimental and is capped at
+// maxPizzaSQLConnsPerEngine connections per ORM layer unless a lower value is
+// explicitly configured. A zero value is treated as unset and capped, because
+// it means "unlimited" to database/sql.
+func PoolSize(dbType string, configured int) int {
+	if dbType != "pizzasql" {
+		return configured
+	}
+	if configured <= 0 || configured > maxPizzaSQLConnsPerEngine {
+		return maxPizzaSQLConnsPerEngine
+	}
+	return configured
+}
+
+// IdlePoolSize returns the effective max-idle-connections pool size for the
+// given database type. Unlike PoolSize, an explicit zero is preserved because
+// it means "no idle connections" to database/sql.
+func IdlePoolSize(dbType string, configured int) int {
+	if dbType != "pizzasql" {
+		return configured
+	}
+	if configured > maxPizzaSQLConnsPerEngine {
+		return maxPizzaSQLConnsPerEngine
+	}
+	return configured
+}
+
+// PizzaSQLSSLMode returns the effective SSL mode for the pizzasql backend. An
+// empty value defaults to "require" so TLS is on unless explicitly disabled.
+func PizzaSQLSSLMode(mode string) string {
+	if mode == "" {
+		return "require"
+	}
+	return mode
+}
+
+// quotePGKeywordValue wraps a PostgreSQL keyword/value connection string
+// component in single quotes. A single quote ends the quoted string and a
+// backslash is an escape character in pgx's keyword parser, so both are
+// escaped to prevent a password from breaking out of the value.
+func quotePGKeywordValue(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `'`, `\'`)
+	return "'" + value + "'"
+}
 
 // ParsePostgreSQLHostPort parses given input in various forms defined in
 // https://www.postgresql.org/docs/current/static/libpq-connect.html#LIBPQ-CONNSTRING
@@ -76,6 +129,18 @@ func NewDSN(opts conf.DatabaseOpts) (dsn string, err error) {
 	case "sqlite3":
 		dsn = "file:" + opts.Path + "?cache=shared&mode=rwc"
 
+	case "pizzasql":
+		host, port := ParsePostgreSQLHostPort(opts.Host)
+		sslMode := PizzaSQLSSLMode(opts.SSLMode)
+		dsn = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+			quotePGKeywordValue(host),
+			quotePGKeywordValue(port),
+			quotePGKeywordValue(opts.User),
+			quotePGKeywordValue(opts.Password),
+			quotePGKeywordValue(opts.Name),
+			quotePGKeywordValue(sslMode),
+		)
+
 	default:
 		return "", errors.Errorf("unrecognized dialect: %s", opts.Type)
 	}
@@ -101,6 +166,8 @@ func OpenDB(opts conf.DatabaseOpts, cfg *gorm.Config) (*gorm.DB, error) {
 		dialector = sqlserver.Open(dsn)
 	case "sqlite3":
 		dialector = sqlite.Open(dsn)
+	case "pizzasql":
+		dialector = pizzadriver.Open(dsn)
 	default:
 		panic("unreachable")
 	}

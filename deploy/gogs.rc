@@ -1,0 +1,49 @@
+#!/bin/sh
+
+# PROVIDE: gogs
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+# Gogs web service for git.database.pizza.
+#
+# Install as /usr/local/etc/rc.d/gogs and enable with:
+#   sysrc gogs_enable=YES
+#   service gogs start
+#
+# The service is supervised: daemon(8) runs with "-r -R 5" and keeps the
+# supervisor process ID in /var/run/gogs.pid (via -P, the parent pidfile).
+# Stopping the service sends SIGTERM to the supervisor, which terminates the
+# Gogs child gracefully and exits; the child is only restarted when it exits on
+# its own, never when the supervisor is told to stop. See daemon(8).
+#
+# /var/log/gogs.log is opened by daemon(8) while it is still root, before it
+# drops to the gogs user, so the file is root-owned and cannot be replaced by
+# the service account.
+
+. /etc/rc.subr
+
+name="gogs"
+rcvar="gogs_enable"
+
+command="/usr/sbin/daemon"
+procname="/usr/sbin/daemon"
+pidfile="/var/run/gogs.pid"
+
+load_rc_config "$name"
+
+: ${gogs_enable:="NO"}
+# Do not use gogs_user: rc.subr would drop privileges before daemon opens its
+# root-owned supervisor pidfile. daemon itself drops only the child's privileges.
+: ${gogs_daemon_user:="gogs"}
+: ${gogs_home:="/home/pizzadatabase/gogs/shared"}
+: ${gogs_workdir:="/home/pizzadatabase/gogs/current"}
+: ${gogs_custom:="/home/pizzadatabase/gogs/shared/custom"}
+: ${gogs_bin:="/home/pizzadatabase/gogs/current/gogs"}
+: ${gogs_conf:="/home/pizzadatabase/gogs/shared/custom/conf/app.ini"}
+: ${gogs_log:="/var/log/gogs.log"}
+
+required_files="${gogs_bin} ${gogs_conf}"
+
+command_args="-f -r -R 5 -P ${pidfile} -o ${gogs_log} -u ${gogs_daemon_user} /usr/bin/env HOME=${gogs_home} GOGS_WORK_DIR=${gogs_workdir} GOGS_CUSTOM=${gogs_custom} ${gogs_bin} web --config ${gogs_conf}"
+
+run_rc_command "$1"

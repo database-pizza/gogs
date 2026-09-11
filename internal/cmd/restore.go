@@ -104,6 +104,10 @@ func runRestore(c *cli.Context) error {
 	}
 	conf.InitLogging(true)
 
+	if err := checkPizzaSQLBackupSupport(); err != nil {
+		log.Fatal("%v", err)
+	}
+
 	conn, err := database.SetEngine()
 	if err != nil {
 		return errors.Wrap(err, "set engine")

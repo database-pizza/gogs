@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"runtime"
 	"strings"
 	"time"
 
@@ -233,9 +234,13 @@ func mirrorGitEnv() []string {
 	// network failure or a missing remote endpoint can make git ask for
 	// credentials and stall the server-side process waiting on a terminal that
 	// never responds.
+	askPass := "/bin/true"
+	if runtime.GOOS == "freebsd" {
+		askPass = "/usr/bin/true"
+	}
 	return []string{
 		"GIT_TERMINAL_PROMPT=0",
-		"GIT_ASKPASS=/bin/true",
+		"GIT_ASKPASS=" + askPass,
 		"GCM_INTERACTIVE=Never",
 	}
 }

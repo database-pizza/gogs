@@ -44,6 +44,19 @@ const (
 	archiveRootDir             = "gogs-backup"
 )
 
+// errPizzaSQLBackupUnsupported rejects backup and restore for the pizzasql
+// backend, whose custom lfs_object table does not round-trip through the ORM
+// dump format.
+var errPizzaSQLBackupUnsupported = errors.New("automated backup and restore are not supported for the pizzasql backend: the database dump does not round-trip its lfs_object table, and engine data and repository files must be preserved separately. See DATABASE_PIZZA.md")
+
+// checkPizzaSQLBackupSupport fails when the configured backend is pizzasql.
+func checkPizzaSQLBackupSupport() error {
+	if conf.Database.Type != "pizzasql" {
+		return nil
+	}
+	return errPizzaSQLBackupUnsupported
+}
+
 func runBackup(c *cli.Context) error {
 	zip.Verbose = c.Bool("verbose")
 
@@ -52,6 +65,10 @@ func runBackup(c *cli.Context) error {
 		return errors.Wrap(err, "init configuration")
 	}
 	conf.InitLogging(true)
+
+	if err := checkPizzaSQLBackupSupport(); err != nil {
+		log.Fatal("%v", err)
+	}
 
 	conn, err := database.SetEngine()
 	if err != nil {

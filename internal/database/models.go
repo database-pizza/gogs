@@ -21,6 +21,7 @@ import (
 	"gogs.io/gogs/internal/conf"
 	"gogs.io/gogs/internal/database/migrations"
 	"gogs.io/gogs/internal/dbutil"
+	"gogs.io/gogs/internal/pizzadriver"
 )
 
 // Engine represents a XORM engine or session.
@@ -45,9 +46,27 @@ var (
 	HasEngine    bool
 )
 
+// pizzaSQLXormDriver maps the PizzaSQL database/sql driver to the SQLite
+// dialect so XORM generates SQLite-compatible SQL while the transport is
+// handled by the PizzaSQL wire protocol driver.
+type pizzaSQLXormDriver struct{}
+
+func (pizzaSQLXormDriver) Parse(_, _ string) (*core.Uri, error) {
+	// DbName is deliberately left empty because the SQLite dialect never reads
+	// it, and the connection string contains credentials that must not leak into
+	// logs, errors, or dumps.
+	return &core.Uri{DbType: core.SQLITE}, nil
+}
+
 func init() {
 	// Register the pure-Go SQLite driver as "sqlite3" for XORM compatibility.
 	sql.Register("sqlite3", &sqlite.Driver{})
+
+	// Register the PizzaSQL transport under the SQLite dialect for XORM. The
+	// database/sql driver itself is registered by the pizzadriver package.
+	if core.QueryDriver(pizzadriver.DriverName) == nil {
+		core.RegisterDriver(pizzadriver.DriverName, pizzaSQLXormDriver{})
+	}
 
 	legacyTables = append(legacyTables,
 		new(User), new(PublicKey), new(TwoFactor), new(TwoFactorRecoveryCode),
@@ -106,6 +125,15 @@ func getEngine() (*xorm.Engine, error) {
 		conf.UseSQLite3 = true
 		connStr = "file:" + conf.Database.Path + "?cache=shared&mode=rwc"
 
+	case "pizzasql":
+		conf.UseSQLite3 = true
+		driver = pizzadriver.DriverName
+		dsn, err := dbutil.NewDSN(conf.Database)
+		if err != nil {
+			return nil, errors.Wrap(err, "build DSN")
+		}
+		connStr = dsn
+
 	default:
 		return nil, errors.Newf("unknown database type: %s", conf.Database.Type)
 	}
@@ -158,8 +186,8 @@ func SetEngine() (*gorm.DB, error) {
 		return nil, errors.Newf("create 'xorm.log': %v", err)
 	}
 
-	x.SetMaxOpenConns(conf.Database.MaxOpenConns)
-	x.SetMaxIdleConns(conf.Database.MaxIdleConns)
+	x.SetMaxOpenConns(dbutil.PoolSize(conf.Database.Type, conf.Database.MaxOpenConns))
+	x.SetMaxIdleConns(dbutil.IdlePoolSize(conf.Database.Type, conf.Database.MaxIdleConns))
 	x.SetConnMaxLifetime(time.Second)
 
 	if conf.IsProdMode() {
@@ -167,7 +195,7 @@ func SetEngine() (*gorm.DB, error) {
 	} else {
 		x.SetLogger(xorm.NewSimpleLogger(fileWriter))
 	}
-	x.ShowSQL(true)
+	x.ShowSQL(conf.Database.Type != "pizzasql")
 
 	var gormLogger logger.Writer
 	if conf.HookMode {

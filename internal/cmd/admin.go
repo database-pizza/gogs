@@ -38,6 +38,7 @@ to make automatic initialization process more smoothly`,
 		Flags: []cli.Flag{
 			stringFlag("name", "", "Username"),
 			stringFlag("password", "", "User password"),
+			stringFlag("password-file", "", "Path to a file containing the user password, mutually exclusive with --password"),
 			stringFlag("email", "", "User email address"),
 			boolFlag("admin", "User is an admin"),
 			stringFlag("config, c", "", "Custom configuration file path"),
@@ -132,13 +133,21 @@ to make automatic initialization process more smoothly`,
 func runCreateUser(c *cli.Context) error {
 	if !c.IsSet("name") {
 		return errors.New("Username is not specified")
-	} else if !c.IsSet("password") {
-		return errors.New("Password is not specified")
 	} else if !c.IsSet("email") {
 		return errors.New("Email is not specified")
 	}
 
-	err := conf.Init(c.String("config"))
+	password, err := resolvePassword(
+		c.String("password"),
+		c.String("password-file"),
+		c.IsSet("password"),
+		c.IsSet("password-file"),
+	)
+	if err != nil {
+		return err
+	}
+
+	err = conf.Init(c.String("config"))
 	if err != nil {
 		return errors.Wrap(err, "init configuration")
 	}
@@ -153,7 +162,7 @@ func runCreateUser(c *cli.Context) error {
 		c.String("name"),
 		c.String("email"),
 		database.CreateUserOptions{
-			Password:  c.String("password"),
+			Password:  password,
 			Activated: true,
 			Admin:     c.Bool("admin"),
 		},

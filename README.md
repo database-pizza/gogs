@@ -1,3 +1,8 @@
+> **Note:** This is a fork of [Gogs](https://github.com/gogs/gogs) `v0.14.3`
+> with an experimental [PizzaSQL](https://database.pizza) storage backend. See
+> [DATABASE_PIZZA.md](DATABASE_PIZZA.md) for the local development launcher and
+> backend documentation.
+
 ![gogs-brand](https://user-images.githubusercontent.com/2946214/146899259-6a8b58ad-8d6e-40d2-ab02-79dc6aadabbf.png)
 
 [![GitHub Workflow Status](https://img.shields.io/github/checks-status/gogs/gogs/main?logo=github&style=for-the-badge)](https://github.com/gogs/gogs/actions?query=branch%3Amain) [![Sourcegraph](https://img.shields.io/badge/view%20on-Sourcegraph-brightgreen.svg?style=for-the-badge&logo=sourcegraph)](https://sourcegraph.com/github.com/gogs/gogs)

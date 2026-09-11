@@ -121,7 +121,7 @@ func InstallInit(c *context.Context) {
 	c.Title("install.install")
 	c.PageIs("Install")
 
-	c.Data["DbOptions"] = []string{"MySQL", "PostgreSQL", "SQLite3"}
+	c.Data["DbOptions"] = []string{"MySQL", "PostgreSQL", "SQLite3", "PizzaSQL"}
 }
 
 func Install(c *context.Context) {
@@ -132,6 +132,7 @@ func Install(c *context.Context) {
 	f.DbUser = conf.Database.User
 	f.DbName = conf.Database.Name
 	f.DbSchema = conf.Database.Schema
+	f.SSLMode = conf.Database.SSLMode
 	f.DbPath = conf.Database.Path
 
 	c.Data["CurDbOption"] = "PostgreSQL"
@@ -140,6 +141,8 @@ func Install(c *context.Context) {
 		c.Data["CurDbOption"] = "MySQL"
 	case "sqlite3":
 		c.Data["CurDbOption"] = "SQLite3"
+	case "pizzasql":
+		c.Data["CurDbOption"] = "PizzaSQL"
 	}
 
 	// Application general settings
@@ -210,6 +213,7 @@ func InstallPost(c *context.Context, f form.Install) {
 		"PostgreSQL": "postgres",
 		"MySQL":      "mysql",
 		"SQLite3":    "sqlite3",
+		"PizzaSQL":   "pizzasql",
 	}
 	conf.Database.Type = dbTypes[f.DbType]
 	conf.Database.Host = f.DbHost
