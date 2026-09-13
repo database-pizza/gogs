@@ -1922,52 +1922,51 @@ func DeleteOldRepositoryArchives() {
 
 	formats := []string{"zip", "targz"}
 	oldestTime := time.Now().Add(-conf.Cron.RepoArchiveCleanup.OlderThan)
-	if err := x.Where("id > 0").Iterate(new(Repository),
-		func(idx int, bean any) error {
-			repo := bean.(*Repository)
-			basePath := filepath.Join(repo.RepoPath(), "archives")
-			for _, format := range formats {
-				dirPath := filepath.Join(basePath, format)
-				if !com.IsDir(dirPath) {
+	repos := make([]*Repository, 0, 10)
+	if err := x.Where("id > 0").Find(&repos); err != nil {
+		log.Error("DeleteOldRepositoryArchives: %v", err)
+		return
+	}
+	for _, repo := range repos {
+		basePath := filepath.Join(repo.RepoPath(), "archives")
+		for _, format := range formats {
+			dirPath := filepath.Join(basePath, format)
+			if !com.IsDir(dirPath) {
+				continue
+			}
+
+			dir, err := os.Open(dirPath)
+			if err != nil {
+				log.Error("Failed to open directory '%s': %v", dirPath, err)
+				continue
+			}
+
+			fis, err := dir.Readdir(0)
+			dir.Close()
+			if err != nil {
+				log.Error("Failed to read directory '%s': %v", dirPath, err)
+				continue
+			}
+
+			for _, fi := range fis {
+				if fi.IsDir() || fi.ModTime().After(oldestTime) {
 					continue
 				}
 
-				dir, err := os.Open(dirPath)
-				if err != nil {
-					log.Error("Failed to open directory '%s': %v", dirPath, err)
-					continue
-				}
-
-				fis, err := dir.Readdir(0)
-				dir.Close()
-				if err != nil {
-					log.Error("Failed to read directory '%s': %v", dirPath, err)
-					continue
-				}
-
-				for _, fi := range fis {
-					if fi.IsDir() || fi.ModTime().After(oldestTime) {
-						continue
-					}
-
-					archivePath := filepath.Join(dirPath, fi.Name())
-					if err = os.Remove(archivePath); err != nil {
-						const fmtStr = "Failed to health delete archive %q: %v"
-						log.Warn(fmtStr, archivePath, err)
-						if err = Handle.Notices().Create(
-							context.TODO(),
-							NoticeTypeRepository,
-							fmt.Sprintf(fmtStr, archivePath, err),
-						); err != nil {
-							log.Error("CreateRepositoryNotice: %v", err)
-						}
+				archivePath := filepath.Join(dirPath, fi.Name())
+				if err = os.Remove(archivePath); err != nil {
+					const fmtStr = "Failed to health delete archive %q: %v"
+					log.Warn(fmtStr, archivePath, err)
+					if err = Handle.Notices().Create(
+						context.TODO(),
+						NoticeTypeRepository,
+						fmt.Sprintf(fmtStr, archivePath, err),
+					); err != nil {
+						log.Error("CreateRepositoryNotice: %v", err)
 					}
 				}
 			}
-
-			return nil
-		}); err != nil {
-		log.Error("DeleteOldRepositoryArchives: %v", err)
+		}
 	}
 }
 
@@ -1979,25 +1978,31 @@ func DeleteRepositoryArchives() error {
 	taskStatusTable.Start(taskNameCleanOldArchives)
 	defer taskStatusTable.Stop(taskNameCleanOldArchives)
 
-	return x.Where("id > 0").Iterate(new(Repository),
-		func(idx int, bean any) error {
-			repo := bean.(*Repository)
-			return os.RemoveAll(filepath.Join(repo.RepoPath(), "archives"))
-		})
+	repos := make([]*Repository, 0, 10)
+	if err := x.Where("id > 0").Find(&repos); err != nil {
+		return err
+	}
+	for _, repo := range repos {
+		if err := os.RemoveAll(filepath.Join(repo.RepoPath(), "archives")); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func gatherMissingRepoRecords() ([]*Repository, error) {
-	repos := make([]*Repository, 0, 10)
-	if err := x.Where("id > 0").Iterate(new(Repository),
-		func(idx int, bean any) error {
-			repo := bean.(*Repository)
-			if !com.IsDir(repo.RepoPath()) {
-				repos = append(repos, repo)
-			}
-			return nil
-		}); err != nil {
+	all := make([]*Repository, 0, 10)
+	if err := x.Where("id > 0").Find(&all); err != nil {
 		if err2 := Handle.Notices().Create(context.TODO(), NoticeTypeRepository, fmt.Sprintf("gatherMissingRepoRecords: %v", err)); err2 != nil {
 			return nil, errors.Newf("CreateRepositoryNotice: %v", err)
+		}
+		return all, nil
+	}
+
+	repos := make([]*Repository, 0, 10)
+	for _, repo := range all {
+		if !com.IsDir(repo.RepoPath()) {
+			repos = append(repos, repo)
 		}
 	}
 	return repos, nil
@@ -2050,18 +2055,22 @@ func ReinitMissingRepositories() error {
 // SyncRepositoryHooks rewrites all repositories' pre-receive, update and post-receive hooks
 // to make sure the binary and custom conf path are up-to-date.
 func SyncRepositoryHooks() error {
-	return x.Where("id > 0").Iterate(new(Repository),
-		func(idx int, bean any) error {
-			repo := bean.(*Repository)
-			if err := createDelegateHooks(repo.RepoPath()); err != nil {
+	repos := make([]*Repository, 0, 10)
+	if err := x.Where("id > 0").Find(&repos); err != nil {
+		return err
+	}
+	for _, repo := range repos {
+		if err := createDelegateHooks(repo.RepoPath()); err != nil {
+			return err
+		}
+
+		if repo.HasWiki() {
+			if err := createDelegateHooks(repo.WikiPath()); err != nil {
 				return err
 			}
-
-			if repo.HasWiki() {
-				return createDelegateHooks(repo.WikiPath())
-			}
-			return nil
-		})
+		}
+	}
+	return nil
 }
 
 // Prevent duplicate running tasks.
@@ -2084,50 +2093,52 @@ func GitFsck() {
 
 	log.Trace("Doing: GitFsck")
 
-	if err := x.Where("id>0").Iterate(new(Repository),
-		func(idx int, bean any) error {
-			repo := bean.(*Repository)
-			repoPath := repo.RepoPath()
-			err := git.Fsck(repoPath, git.FsckOptions{
-				CommandOptions: git.CommandOptions{
-					Args: conf.Cron.RepoHealthCheck.Args,
-				},
-				Timeout: conf.Cron.RepoHealthCheck.Timeout,
-			})
-			if err != nil {
-				const fmtStr = "Failed to perform health check on repository %q: %v"
-				log.Warn(fmtStr, repoPath, err)
-				if err = Handle.Notices().Create(
-					context.TODO(),
-					NoticeTypeRepository,
-					fmt.Sprintf(fmtStr, repoPath, err),
-				); err != nil {
-					log.Error("CreateRepositoryNotice: %v", err)
-				}
-			}
-			return nil
-		}); err != nil {
+	repos := make([]*Repository, 0, 10)
+	if err := x.Where("id>0").Find(&repos); err != nil {
 		log.Error("GitFsck: %v", err)
+		return
+	}
+	for _, repo := range repos {
+		repoPath := repo.RepoPath()
+		err := git.Fsck(repoPath, git.FsckOptions{
+			CommandOptions: git.CommandOptions{
+				Args: conf.Cron.RepoHealthCheck.Args,
+			},
+			Timeout: conf.Cron.RepoHealthCheck.Timeout,
+		})
+		if err != nil {
+			const fmtStr = "Failed to perform health check on repository %q: %v"
+			log.Warn(fmtStr, repoPath, err)
+			if err = Handle.Notices().Create(
+				context.TODO(),
+				NoticeTypeRepository,
+				fmt.Sprintf(fmtStr, repoPath, err),
+			); err != nil {
+				log.Error("CreateRepositoryNotice: %v", err)
+			}
+		}
 	}
 }
 
 func GitGcRepos() error {
 	args := append([]string{"gc"}, conf.Git.GCArgs...)
-	return x.Where("id > 0").Iterate(new(Repository),
-		func(idx int, bean any) error {
-			repo := bean.(*Repository)
-			if err := repo.GetOwner(); err != nil {
-				return err
-			}
-			_, stderr, err := process.ExecDir(
-				time.Duration(conf.Git.Timeout.GC)*time.Second,
-				RepoPath(repo.Owner.Name, repo.Name), "Repository garbage collection",
-				"git", args...)
-			if err != nil {
-				return errors.Newf("%v: %v", err, stderr)
-			}
-			return nil
-		})
+	repos := make([]*Repository, 0, 10)
+	if err := x.Where("id > 0").Find(&repos); err != nil {
+		return err
+	}
+	for _, repo := range repos {
+		if err := repo.GetOwner(); err != nil {
+			return err
+		}
+		_, stderr, err := process.ExecDir(
+			time.Duration(conf.Git.Timeout.GC)*time.Second,
+			RepoPath(repo.Owner.Name, repo.Name), "Repository garbage collection",
+			"git", args...)
+		if err != nil {
+			return errors.Newf("%v: %v", err, stderr)
+		}
+	}
+	return nil
 }
 
 type repoChecker struct {

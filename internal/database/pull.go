@@ -837,25 +837,25 @@ func (pr *PullRequest) checkAndUpdateStatus() {
 // TestPullRequests checks and tests untested patches of pull requests.
 // TODO: test more pull requests at same time.
 func TestPullRequests() {
-	prs := make([]*PullRequest, 0, 10)
-	_ = x.Iterate(PullRequest{
-		Status: PullRequestStatusChecking,
-	},
-		func(idx int, bean any) error {
-			pr := bean.(*PullRequest)
+	checking := make([]*PullRequest, 0, 10)
+	if err := x.Where("status = ?", PullRequestStatusChecking).Find(&checking); err != nil {
+		log.Error("TestPullRequests: %v", err)
+		return
+	}
 
-			if err := pr.LoadAttributes(); err != nil {
-				log.Error("LoadAttributes: %v", err)
-				return nil
-			}
+	prs := make([]*PullRequest, 0, len(checking))
+	for _, pr := range checking {
+		if err := pr.LoadAttributes(); err != nil {
+			log.Error("LoadAttributes: %v", err)
+			continue
+		}
 
-			if err := pr.testPatch(); err != nil {
-				log.Error("testPatch: %v", err)
-				return nil
-			}
-			prs = append(prs, pr)
-			return nil
-		})
+		if err := pr.testPatch(); err != nil {
+			log.Error("testPatch: %v", err)
+			continue
+		}
+		prs = append(prs, pr)
+	}
 
 	// Update pull request status.
 	for _, pr := range prs {
