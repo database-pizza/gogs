@@ -8,24 +8,32 @@ serves database.pizza.
 
 The initial deployment used these artifacts on 2026-09-10. The Gogs service is
 bound to `127.0.0.1:3001`, uses the hosted `gogs/gogs` database through the
-managed PostgreSQL proxy, and is registered as a FreeBSD `gogs` service. No
-secrets, API keys, or passwords are committed anywhere in this repository.
+managed PostgreSQL proxy, and is registered as a FreeBSD `gogs` service. Releases
+are staged as timestamped directories under `releases/` and selected with the
+`current` symlink, so a rollout or rollback is a symlink switch plus a service
+restart. No secrets, API keys, or passwords are committed anywhere in this
+repository.
 
 ## Shape
 
 Gogs runs under a dedicated, unprivileged `gogs` OS account with no interactive
-shell. A `current` directory holds the release binary and a `shared` directory
-holds everything that survives a binary upgrade:
+shell. Each release is a timestamped executable directory and `current` is a
+symlink to the active one. A `shared` directory holds everything that survives a
+binary upgrade:
 
 | Path | Purpose |
 | --- | --- |
-| `/home/pizzadatabase/gogs/current/gogs` | Release executable. |
+| `/home/pizzadatabase/gogs/releases/<timestamp>/gogs` | Release executable, mode `0555`. |
+| `/home/pizzadatabase/gogs/current` | Symlink to the active release directory. |
 | `/home/pizzadatabase/gogs/shared/custom/conf/app.ini` | Custom configuration. |
 | `/home/pizzadatabase/gogs/shared/data` | Application data (sessions, avatars, attachments, logs, LFS). |
 | `/home/pizzadatabase/gogs/shared/repos` | Managed repositories. |
 
-`GOGS_WORK_DIR` points at `current` and `GOGS_CUSTOM` at `shared/custom`, so the
-config and data live outside the release directory and survive an upgrade.
+The top-level `/home/pizzadatabase/gogs` directory and release binaries are owned
+by `root:pizzadatabase`; release directories are mode `0755` and binaries are mode
+`0555`. `shared` is owned by `gogs:gogs` with mode `0700`. `GOGS_WORK_DIR` points
+at `current` and `GOGS_CUSTOM` at `shared/custom`, so the config and data live
+outside the release directory and survive an upgrade.
 
 ## Database
 
@@ -53,12 +61,15 @@ Create the dedicated account once, with no login shell and a home under the
 pw useradd -n gogs -u 901 -d /home/pizzadatabase/gogs/shared -s /usr/sbin/nologin -c "Gogs"
 ```
 
-Pick an unused UID; the example `901` is a placeholder. Own the working
-directories so the service can write while the parent stays operator-controlled:
+Pick an unused UID; the example `901` is a placeholder. Create the release and
+shared trees. `current` is created later as a symlink by the release step, and
+only `shared` is owned by the service account:
 
 ```sh
-mkdir -p /home/pizzadatabase/gogs/current /home/pizzadatabase/gogs/shared/custom/conf \
+mkdir -p /home/pizzadatabase/gogs/releases \
+  /home/pizzadatabase/gogs/shared/custom/conf \
   /home/pizzadatabase/gogs/shared/data /home/pizzadatabase/gogs/shared/repos
+chown root:pizzadatabase /home/pizzadatabase/gogs /home/pizzadatabase/gogs/releases
 chown -R gogs:gogs /home/pizzadatabase/gogs/shared
 ```
 
@@ -109,7 +120,8 @@ created from the CLI. The two must happen in this order because `NewEngine` runs
 migrations on boot while `admin create-user` only opens a connection and assumes
 the schema already exists:
 
-1. Start the service once and let it migrate and settle:
+1. Stage a release first (see [Release](#release)), then start the service once
+   and let it migrate and settle:
 
    ```sh
    service gogs start
@@ -144,18 +156,64 @@ to `127.0.0.1:3001` and forwards the `Host` header. Gogs is configured with
 `EXTERNAL_URL = https://git.database.pizza/`, so generated links and cookies
 match the public origin.
 
+## Release
+
+Build the binary with the same stamps as the `build` task, then stage it as a new
+timestamped release and switch `current` to it. Building on the host is simplest;
+cross-compile from another host with `GOOS=freebsd GOARCH=arm64 CGO_ENABLED=0`.
+
+```sh
+commit=$(git rev-parse HEAD)
+build_time=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+GOOS=freebsd GOARCH=arm64 CGO_ENABLED=0 go build -trimpath \
+  -ldflags "-X gogs.io/gogs/internal/conf.BuildTime=$build_time -X gogs.io/gogs/internal/conf.BuildCommit=$commit" \
+  -o .bin/gogs .
+```
+
+Record the active release before switching so rollback is a symlink flip back to
+it, then stage the binary, switch the symlink, and restart:
+
+```sh
+readlink /home/pizzadatabase/gogs/current
+
+base=/home/pizzadatabase/gogs
+ts=$(date +%Y%m%d-%H%M%S)
+install -d -o root -g pizzadatabase "$base/releases/$ts"
+install -m 0555 -o root -g pizzadatabase .bin/gogs "$base/releases/$ts/gogs"
+ln -s "releases/$ts" "$base/current.next"
+mv -hf "$base/current.next" "$base/current"
+service gogs restart
+```
+
+Verify the listener and the public site, including a DB-backed page:
+
+```sh
+sockstat -46l | grep 3001
+curl -fsS -o /dev/null https://git.database.pizza/
+curl -fsS -o /dev/null https://git.database.pizza/explore/repos
+```
+
+Previous release directories stay in place, so a rollback never needs a rebuild.
+
 ## Backup and rollback
 
 The PizzaSQL backend does not support Gogs' built-in `backup`/`restore` commands
 (see `DATABASE_PIZZA.md`), so the approved backup plan is external. Before any
 rollout step, snapshot the managed `gogs/gogs` database through the managed
-service and archive the `shared` directory and the `current` release binary.
+service and archive the `shared` directory and the active release directory under
+`releases/`.
 
 Rollback is therefore:
 
 1. `service gogs stop`.
 2. Restore the managed database snapshot and the previous `shared` tree.
-3. Restore the previous `current` binary.
+3. Point `current` at the previous release directory:
+
+   ```sh
+   ln -s releases/<previous> /home/pizzadatabase/gogs/current.next
+   mv -hf /home/pizzadatabase/gogs/current.next /home/pizzadatabase/gogs/current
+   ```
+
 4. `service gogs start`.
 
 Because configuration and data live in `shared` and the release in `current`,
