@@ -63,10 +63,10 @@ Without these the engine will reject migrations and queries at startup.
 
 ## LFS table shape
 
-The engine collapses a composite primary key to its first column, so the
-standard `lfs_object` table (`PRIMARY KEY (repo_id, oid)`) would collapse to
-`repo_id` and lose uniqueness. For this backend only, `lfs_object` is created
-with a surrogate shape instead:
+The engine rejects composite primary keys with SQLSTATE `0A000`, so the
+standard `lfs_object` table (`PRIMARY KEY (repo_id, oid)`) cannot be created
+as-is. For this backend only, `lfs_object` is created with a surrogate shape
+instead:
 
 - A single auto-increment `id` integer primary key.
 - A `UNIQUE INDEX idx_lfs_object_repo_oid (repo_id, oid)`.
@@ -90,7 +90,10 @@ SSL_MODE = disable
 ```
 
 `SSL_MODE = disable` is required against the local engine because it has no TLS
-listener; `require` or `verify-full` would refuse to connect.
+listener; `require` or `verify-full` would refuse to connect. The managed
+pgproxy can terminate TLS (`require` or `verify-full`) when the deployment
+installs a certificate; `disable` is intentional only on the trusted loopback
+hop. See `app.database.pizza/PGPROXY_TLS.md`.
 
 ### SSL mode default
 
@@ -112,7 +115,8 @@ passwords containing quotes or backslashes are handled safely.
 
 The pool size is budgeted: both the GORM and XORM layers share the one remote
 engine, so each layer's max-open-connections is capped at 3 unless you
-configure a lower value.
+configure a lower value. This keeps the backend well under the per-organization
+connection quota (default 64; migration `020`).
 
 ## Verification
 
