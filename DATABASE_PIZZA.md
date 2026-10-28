@@ -63,10 +63,9 @@ Without these the engine will reject migrations and queries at startup.
 
 ## LFS table shape
 
-The engine collapses a composite primary key to its first column, so the
-standard `lfs_object` table (`PRIMARY KEY (repo_id, oid)`) would collapse to
-`repo_id` and lose uniqueness. For this backend only, `lfs_object` is created
-with a surrogate shape instead:
+The engine rejects composite primary keys, so the standard `lfs_object` table
+(`PRIMARY KEY (repo_id, oid)`) cannot be created as-is. For this backend only,
+`lfs_object` is created with a surrogate shape instead:
 
 - A single auto-increment `id` integer primary key.
 - A `UNIQUE INDEX idx_lfs_object_repo_oid (repo_id, oid)`.
